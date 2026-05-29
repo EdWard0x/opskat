@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -29,6 +30,8 @@ type DatabaseDriver string
 const (
 	DriverMySQL      DatabaseDriver = "mysql"
 	DriverPostgreSQL DatabaseDriver = "postgresql"
+	DriverMSSQL      DatabaseDriver = "mssql"
+	DriverSQLite     DatabaseDriver = "sqlite"
 )
 
 // DefaultPort 返回驱动默认端口
@@ -38,6 +41,10 @@ func (d DatabaseDriver) DefaultPort() int {
 		return 3306
 	case DriverPostgreSQL:
 		return 5432
+	case DriverMSSQL:
+		return 1433
+	case DriverSQLite:
+		return 0
 	default:
 		return 0
 	}
@@ -122,6 +129,7 @@ type DatabaseConfig struct {
 	Params       string         `json:"params,omitempty"`        // 额外连接参数
 	ReadOnly     bool           `json:"read_only,omitempty"`     // 连接级只读
 	SSHAssetID   int64          `json:"ssh_asset_id,omitempty"`  // Deprecated: use Asset.SSHTunnelID
+	Path         string         `json:"path,omitempty"`          // SQLite 是本地嵌入式文件库，无 host/port 概念，路径独立字段；其他 driver 永远为空
 }
 
 // RedisConfig Redis类型的特定配置
@@ -687,18 +695,28 @@ func (a *Asset) validateDatabase() error {
 		return errors.New("数据库驱动不能为空")
 	}
 	switch cfg.Driver {
-	case DriverMySQL, DriverPostgreSQL:
+	case DriverMySQL, DriverPostgreSQL, DriverMSSQL:
+		if cfg.Host == "" {
+			return errors.New("数据库主机地址不能为空")
+		}
+		if cfg.Port <= 0 {
+			return errors.New("数据库端口无效")
+		}
+		if cfg.Username == "" {
+			return errors.New("数据库用户名不能为空")
+		}
+	case DriverSQLite:
+		if cfg.Path == "" {
+			return errors.New("SQLite 必须指定 path")
+		}
+		if !filepath.IsAbs(cfg.Path) {
+			return errors.New("SQLite path 必须为绝对路径")
+		}
+		if a.SSHTunnelID > 0 {
+			return errors.New("SQLite 不支持 SSH 隧道")
+		}
 	default:
 		return fmt.Errorf("不支持的数据库驱动: %s", cfg.Driver)
-	}
-	if cfg.Host == "" {
-		return errors.New("数据库主机地址不能为空")
-	}
-	if cfg.Port <= 0 {
-		return errors.New("数据库端口无效")
-	}
-	if cfg.Username == "" {
-		return errors.New("数据库用户名不能为空")
 	}
 	return nil
 }

@@ -86,9 +86,9 @@ interface SSHConfig {
 
 interface DatabaseConfig {
   driver: string;
-  host: string;
-  port: number;
-  username: string;
+  host?: string;
+  port?: number;
+  username?: string;
   password?: string;
   credential_id?: number;
   database?: string;
@@ -97,6 +97,7 @@ interface DatabaseConfig {
   params?: string;
   read_only?: boolean;
   ssh_asset_id?: number;
+  path?: string;
 }
 
 interface RedisConfig {
@@ -208,6 +209,7 @@ const DEFAULT_PORTS: Record<string, number> = {
   ssh: 22,
   mysql: 3306,
   postgresql: 5432,
+  mssql: 1433,
   redis: 6379,
   mongodb: 27017,
   kafka: 9092,
@@ -219,6 +221,8 @@ const DEFAULT_ICONS: Record<string, string> = {
   ssh: "server",
   mysql: "mysql",
   postgresql: "postgresql",
+  mssql: "database",
+  sqlite: "sqlite",
   redis: "redis",
   mongodb: "mongodb",
   kafka: "kafka",
@@ -356,6 +360,7 @@ export function AssetForm({ open, onOpenChange, editAsset, defaultGroupId = 0 }:
 
   // Database fields
   const [driver, setDriver] = useState("mysql");
+  const [path, setPath] = useState("");
   const [database, setDatabase] = useState("");
   const [sslMode, setSslMode] = useState("disable");
   const [readOnly, setReadOnly] = useState(false);
@@ -578,6 +583,7 @@ export function AssetForm({ open, onOpenChange, editAsset, defaultGroupId = 0 }:
       setPort(cfg.port || 3306);
       setUsername(cfg.username || "");
       setDriver(cfg.driver || "mysql");
+      setPath(cfg.path || "");
       setDatabase(cfg.database || "");
       setSslMode(cfg.ssl_mode || "disable");
       setTls(cfg.tls || false);
@@ -801,6 +807,7 @@ export function AssetForm({ open, onOpenChange, editAsset, defaultGroupId = 0 }:
   // Database-exclusive fields only
   const resetDatabaseFields = () => {
     setDriver("mysql");
+    setPath("");
     setDatabase("");
     setSslMode("disable");
     setTls(false);
@@ -915,10 +922,21 @@ export function AssetForm({ open, onOpenChange, editAsset, defaultGroupId = 0 }:
 
   const handleDriverChange = (newDriver: string) => {
     setDriver(newDriver);
-    setPort(DEFAULT_PORTS[newDriver] || 3306);
-    setIcon(DEFAULT_ICONS[newDriver] || "mysql");
-    if (newDriver !== "postgresql") {
-      setSslMode("disable");
+    if (newDriver === "sqlite") {
+      setHost("");
+      setPort(0);
+      setUsername("");
+      setPassword("");
+      setEncryptedPassword("");
+      setSshTunnelId(0);
+      setIcon(DEFAULT_ICONS["sqlite"]);
+    } else {
+      setPort(DEFAULT_PORTS[newDriver] || 3306);
+      setIcon(DEFAULT_ICONS[newDriver] || "database");
+      setPath("");
+      if (newDriver !== "postgresql") {
+        setSslMode("disable");
+      }
     }
   };
 
@@ -1013,14 +1031,21 @@ export function AssetForm({ open, onOpenChange, editAsset, defaultGroupId = 0 }:
   };
 
   const handleTestDatabaseConnection = async () => {
-    const cfg: DatabaseConfig = { driver, host, port, username };
+    const cfg: DatabaseConfig = { driver };
+    if (driver === "sqlite") {
+      cfg.path = path;
+    } else {
+      cfg.host = host;
+      cfg.port = port;
+      cfg.username = username;
+      if (sshTunnelId > 0) cfg.ssh_asset_id = sshTunnelId;
+      applyTestPasswordSource(cfg);
+    }
     if (database) cfg.database = database;
     if (driver === "postgresql" && sslMode !== "disable") cfg.ssl_mode = sslMode;
-    if (driver === "mysql" && tls) cfg.tls = true;
+    if ((driver === "mysql" || driver === "mssql") && tls) cfg.tls = true;
     if (readOnly) cfg.read_only = true;
-    if (sshTunnelId > 0) cfg.ssh_asset_id = sshTunnelId;
     if (params) cfg.params = params;
-    applyTestPasswordSource(cfg);
     const testId = newTestId();
     activeTestIdRef.current = testId;
     setTesting(true);
@@ -1378,22 +1403,25 @@ export function AssetForm({ open, onOpenChange, editAsset, defaultGroupId = 0 }:
       }
       config = JSON.stringify(sshConfig);
     } else if (assetType === "database") {
-      const dbConfig: DatabaseConfig = {
-        driver,
-        host,
-        port,
-        username,
-      };
-      if (passwordSource === "managed" && passwordCredentialId > 0) {
-        dbConfig.credential_id = passwordCredentialId;
+      const dbConfig: DatabaseConfig = { driver };
+      if (driver === "sqlite") {
+        dbConfig.path = path;
       } else {
-        const encrypted = await encryptPasswordValue();
-        if (encrypted === undefined) return;
-        if (encrypted) dbConfig.password = encrypted;
+        dbConfig.host = host;
+        dbConfig.port = port;
+        dbConfig.username = username;
+        if (passwordSource === "managed" && passwordCredentialId > 0) {
+          dbConfig.credential_id = passwordCredentialId;
+        } else {
+          const encrypted = await encryptPasswordValue();
+          if (encrypted === undefined) return;
+          if (encrypted) dbConfig.password = encrypted;
+        }
+        if (sshTunnelId > 0) dbConfig.ssh_asset_id = sshTunnelId;
+        if (driver === "postgresql" && sslMode !== "disable") dbConfig.ssl_mode = sslMode;
+        if ((driver === "mysql" || driver === "mssql") && tls) dbConfig.tls = true;
       }
       if (database) dbConfig.database = database;
-      if (driver === "postgresql" && sslMode !== "disable") dbConfig.ssl_mode = sslMode;
-      if (driver === "mysql" && tls) dbConfig.tls = true;
       if (readOnly) dbConfig.read_only = true;
       if (params) dbConfig.params = params;
       config = JSON.stringify(dbConfig);
@@ -1625,31 +1653,37 @@ export function AssetForm({ open, onOpenChange, editAsset, defaultGroupId = 0 }:
       ? kafkaBrokers().length === 0
       : assetType === "serial"
         ? !serialPortPath
-        : assetType === "etcd"
-          ? etcdEndpointsList().length === 0
-          : assetType !== "mongodb"
-            ? !host
-            : mongoConnectionMode === "uri"
-              ? !connectionURI
-              : !host);
+        : assetType === "database" && driver === "sqlite"
+          ? !path
+          : assetType === "etcd"
+            ? etcdEndpointsList().length === 0
+            : assetType !== "mongodb"
+              ? !host
+              : mongoConnectionMode === "uri"
+                ? !connectionURI
+                : !host);
 
   const saveDisabledReason = !name.trim()
     ? "asset.formMissingName"
-    : ["ssh", "database", "redis"].includes(assetType) && !host.trim()
-      ? "asset.formMissingHost"
-      : assetType === "mongodb" && mongoConnectionMode === "manual" && !host.trim()
+    : assetType === "database" && driver === "sqlite" && !path.trim()
+      ? "asset.formMissingPath"
+      : ["ssh", "redis"].includes(assetType) && !host.trim()
         ? "asset.formMissingHost"
-        : assetType === "mongodb" && mongoConnectionMode === "uri" && !connectionURI.trim()
-          ? "asset.formMissingMongoUri"
-          : assetType === "kafka" && kafkaBrokers().length === 0
-            ? "asset.formMissingKafkaBrokers"
-            : assetType === "k8s" && !kubeconfig.trim() && !editAsset
-              ? "asset.formMissingKubeconfig"
-              : assetType === "serial" && !serialPortPath.trim()
-                ? "asset.formMissingSerialPort"
-                : assetType === "etcd" && etcdEndpointsList().length === 0
-                  ? "etcd.error.endpointsRequired"
-                  : "";
+        : assetType === "database" && driver !== "sqlite" && !host.trim()
+          ? "asset.formMissingHost"
+          : assetType === "mongodb" && mongoConnectionMode === "manual" && !host.trim()
+            ? "asset.formMissingHost"
+            : assetType === "mongodb" && mongoConnectionMode === "uri" && !connectionURI.trim()
+              ? "asset.formMissingMongoUri"
+              : assetType === "kafka" && kafkaBrokers().length === 0
+                ? "asset.formMissingKafkaBrokers"
+                : assetType === "k8s" && !kubeconfig.trim() && !editAsset
+                  ? "asset.formMissingKubeconfig"
+                  : assetType === "serial" && !serialPortPath.trim()
+                    ? "asset.formMissingSerialPort"
+                    : assetType === "etcd" && etcdEndpointsList().length === 0
+                      ? "etcd.error.endpointsRequired"
+                      : "";
   const saveDisabled = saving || !!saveDisabledReason;
 
   const handleRunTestConnection =
@@ -1782,6 +1816,8 @@ export function AssetForm({ open, onOpenChange, editAsset, defaultGroupId = 0 }:
                   <SelectContent>
                     <SelectItem value="mysql">{t("asset.driverMySQL")}</SelectItem>
                     <SelectItem value="postgresql">{t("asset.driverPostgreSQL")}</SelectItem>
+                    <SelectItem value="mssql">{t("asset.driverMSSQL")}</SelectItem>
+                    <SelectItem value="sqlite">{t("asset.driverSQLite")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1859,6 +1895,8 @@ export function AssetForm({ open, onOpenChange, editAsset, defaultGroupId = 0 }:
                 setSshTunnelId={setSshTunnelId}
                 params={params}
                 setParams={setParams}
+                path={path}
+                setPath={setPath}
                 password={password}
                 setPassword={setPassword}
                 encryptedPassword={encryptedPassword}
