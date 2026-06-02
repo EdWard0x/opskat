@@ -84,6 +84,15 @@ Frontend:
 - i18n: `zh-CN` and `en`, keys under the `common` namespace; use `t("key.subkey")`.
 - Tests: Vitest, happy-dom, React Testing Library, Wails mocks in `src/__tests__/setup.ts`.
 
+## Cohesion & Coupling (高内聚低耦合)
+
+The architecture above is a set of seams; these rules keep logic from bleeding across them. They build on the layering rule (bindings -> service -> repository) and the reuse rules under "Development Rules" — apply those, do not restate them.
+
+- Extend by registration, not by editing a switch. New asset type implements `assettype.AssetTypeHandler` and calls `Register()` from the file's `init()` (see `ssh.go`, `redis.go`, `k8s.go`); new repository adds a `RegisterXxx()` setter plus an `Xxx()` getter; new AI tool registers in the tool registry; new policy gets its own `*_policy.go`. Never branch on a type string (`if assetType == "ssh"`, `switch protocol`) in shared code — that is exactly the coupling the registry removes. Shared logic across types goes into a helper the handlers call (for example `validateRemoteServerArgs`), not into branches inside the dispatcher.
+- Depend on the interface, call through the getter. Services consume `asset_repo.Asset()` (the `AssetRepo` interface), never a concrete repo struct or GORM directly; that interface is what makes `mock_*/` substitutable in tests. Do not reach past a seam: a service must not import another service's repository or call into `App`, and `internal/app/*` must not touch repositories or `db`. To read another domain's data, go through its service or getter.
+- Keep the boundary contract narrow. Tool `map[string]any` args are parsed once through the shared `Arg*` helpers (`ArgString`, `ArgInt`, `ArgStringSlice`), not re-parsed per handler. Prefer option-object args (such as `ListOptions`) over long positional/boolean lists. Each handler validates only the fields it needs in `ValidateCreateArgs`; expose the smallest package surface callers actually use.
+- One reason to change per unit. Protocol logic stays in its own handler plus `*_policy.go`; the frontend keeps one Zustand store per domain in `src/stores/`, and components depend on stores/hooks rather than sibling components' internals. If a single feature edit forces changes across three unrelated packages, responsibility has leaked — move it back behind one seam.
+
 ## Conventions
 
 - CI runs Go lint/tests and frontend lint/tests/build on PRs and pushes to `main`/`develop`.
@@ -112,6 +121,7 @@ Reuse these shared frontend primitives when applicable:
 - Common UI: `ConfirmDialog`, drawer/dialog wrappers, `PasswordSourceField`, `IconPicker`.
 - Asset rendering: use canonical helpers such as `getIconComponent`, `getIconColor`, `getAssetType`; respect entity fields like `Icon`, `Type`, `Color`, and policy group.
 - Data/state: add filters or derivations to shared hooks/stores such as `useAssetStore`, `useAssetTree`, `useGroupTree`, `useShortcutStore`.
+- Toasts: route success notifications through `frontend/src/lib/notify.ts` — `notifyCopied` (clipboard/copy, top-center + 1s) and `notifySuccess` (other success, top-center). Do not call `toast.success` directly. Errors/warnings/info keep `toast.error` / `toast.warning` / `toast.info` at the default bottom-right (terminal/AI/query streams refresh upward, so bottom success toasts occlude — see #135).
 
 ## Logging Key Flows
 

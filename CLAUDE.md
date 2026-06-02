@@ -62,6 +62,15 @@ main.go → internal/app/ (Wails bindings, IPC boundary)
 - i18n: i18next, locales in `src/i18n/locales/{zh-CN,en}/common.json`, all keys under `"common"` → `t("key.subkey")`.
 - Tests: Vitest + happy-dom + RTL; Wails runtime mocked in `src/__tests__/setup.ts`.
 
+## 高内聚低耦合 (High cohesion, low coupling)
+
+The architecture above is a set of seams. These rules keep them seams instead of letting logic bleed across them. They build on the layering rule (bindings → service → repository) and [Reuse first](#reuse-first--grep-before-writing) — don't restate those, apply them.
+
+- **Extend by registration, not by editing a switch.** New asset type → implement `assettype.AssetTypeHandler` and `Register()` in the file's `init()` (see `ssh.go`/`redis.go`/`k8s.go`); new repo → `RegisterXxx()` + `Xxx()` getter; new AI tool → register in the tool registry; new policy → its own `*_policy.go`. **Never branch on a type string** (`if assetType == "ssh"`, `switch protocol`) in shared code — that's the coupling the registry exists to remove. Cross-type commonality goes in a shared helper the handlers *call* (e.g. `validateRemoteServerArgs`), not in branches inside the dispatcher.
+- **Depend on the interface, call through the getter.** Services consume `asset_repo.Asset()` (the `AssetRepo` interface), never a concrete repo struct or GORM directly — that interface is what makes `mock_*/` substitutable in tests. Don't reach past a seam: a service must not import another service's repository or call into `App`; `internal/app/*` must not touch repositories or `db`. If you need another domain's data, go through its service/getter.
+- **Keep the boundary contract narrow.** The `map[string]any` tool args are parsed *once* through the shared `Arg*` helpers (`ArgString`/`ArgInt`/`ArgStringSlice`), not re-parsed per handler. Prefer option-object args (e.g. `ListOptions`) over long positional/boolean lists. Each handler declares only the fields it needs in `ValidateCreateArgs`; a package exposes the smallest surface callers actually use.
+- **One reason to change per unit.** Protocol logic lives in its own handler + `*_policy.go`; the frontend keeps one Zustand store per domain (`src/stores/`) and components depend on stores/hooks, not on sibling components' internals. If a single feature edit forces changes across three unrelated packages, the responsibility leaked — move it back behind one seam.
+
 ## Conventions
 
 - **Commits:** gitmoji (✨ feature, 🐛 fix, ♻️ refactor, 🎨 UI, ⚡️ perf, 🔒 security, 🔧 config, ✅ tests, 📄 docs, 🚀 release). 关联 issue 时：subject line（第一行）末尾追加 `#<编号>`，body 里另起一行写 `closes #<编号>`（或 `fixes` / `resolves`）触发 GitHub 自动关闭。例如 subject `🐛 修复 xxx #126`，body 末尾 `closes #126`。
@@ -100,6 +109,7 @@ Parallel copies drift within weeks. Before any new component/hook/util/Go helper
 - **Shared UI primitives** exist: `AssetSelect` / `AssetMultiSelect` / `GroupSelect`, `TreeSelect` / `TreeCheckList`, `ConfirmDialog`, `PasswordSourceField`, `IconPicker`, terminal panes, query result grid, tab system, shortcut store. Don't re-derive expand/collapse, tri-state checkboxes, search/pinyin, shortcuts, approval flows, or icon resolution.
 - **Shared filters/loading** belong in `useAssetStore` / `useAssetTree` / `useGroupTree` / `useShortcutStore`. New filter → hook option, not inline.
 - **Cross-cutting concerns** (audit, AI tool registration, approval, credential encryption, connection pools, i18n) have canonical entry points — don't spin up a second one. 日志规则见上一节 [关键流程要打日志](#关键流程要打日志)。
+- **Toast 通知** 走 `frontend/src/lib/notify.ts`：成功类用 `notifyCopied`（复制/剪贴板，top-center + 1s 一闪而过）/ `notifySuccess`（其它操作成功，top-center），**别直接 `toast.success`**；错误/警告/info 仍用 `toast.error` / `toast.warning` / `toast.info` 留在右下角默认位置。终端 / AI / 查询都是从下往上刷新，成功提示落底部会遮挡（#135）。
 
 Heuristics: importing a primitive (`lucide-react`, tree, Radix, `ConfirmDialog`, xterm) **and** an entity store from a new file usually means you're re-implementing a picker/pane/dialog. Copying >10 lines → extract. Same fix in two near-identical blocks → the second is the bug; delete it, call the first.
 
