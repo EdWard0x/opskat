@@ -49,6 +49,7 @@ vi.mock("../../wailsjs/go/ssh/SSH", () => ({
   ResizeSSH: vi.fn().mockResolvedValue(undefined),
   ConnectSSHAsync: vi.fn().mockResolvedValue("conn-ssh"),
   DisconnectSSH: vi.fn(),
+  SplitSSH: vi.fn().mockResolvedValue("split-ssh"),
 }));
 
 vi.mock("../../wailsjs/go/serial/Serial", () => ({
@@ -63,6 +64,7 @@ vi.mock("../../wailsjs/go/local/Local", () => ({
   ResizeLocalTerminal: vi.fn().mockResolvedValue(undefined),
   ConnectLocalAsync: vi.fn().mockResolvedValue("conn-local"),
   DisconnectLocal: vi.fn(),
+  SplitLocal: vi.fn().mockResolvedValue("split-local"),
 }));
 
 vi.mock("@xterm/xterm", () => {
@@ -174,10 +176,13 @@ describe("TRANSPORTS", () => {
       expect(typeof t.connectAsync).toBe("function");
       expect(typeof t.disconnect).toBe("function");
       expect(typeof t.canSplit).toBe("boolean");
+      // canSplit 与 split 必须一致:可分屏的 transport 必须提供 split 实现,反之不提供。
+      expect(typeof t.split === "function").toBe(t.canSplit);
     }
+    // ssh 复用连接、local 再起一个同 shell 的 PTY,二者均可分屏;serial 物理端口不可复用。
     expect(TRANSPORTS.ssh.canSplit).toBe(true);
     expect(TRANSPORTS.serial.canSplit).toBe(false);
-    expect(TRANSPORTS.local.canSplit).toBe(false);
+    expect(TRANSPORTS.local.canSplit).toBe(true);
     // 只有 ssh 同步 cwd / 暴露 SFTP，serial/local 没有目录能力。
     expect(TRANSPORTS.ssh.hasDirectorySync).toBe(true);
     expect(TRANSPORTS.serial.hasDirectorySync).toBe(false);

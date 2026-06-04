@@ -37,6 +37,7 @@ vi.mock("../../wailsjs/go/kafka/Kafka", () => mockBinderModule("../../wailsjs/go
 vi.mock("../../wailsjs/go/etcd/Etcd", () => mockBinderModule("../../wailsjs/go/etcd/Etcd"));
 vi.mock("../../wailsjs/go/k8s/K8s", () => mockBinderModule("../../wailsjs/go/k8s/K8s"));
 vi.mock("../../wailsjs/go/serial/Serial", () => mockBinderModule("../../wailsjs/go/serial/Serial"));
+vi.mock("../../wailsjs/go/local/Local", () => mockBinderModule("../../wailsjs/go/local/Local"));
 vi.mock("../../wailsjs/go/ai/AI", () => mockBinderModule("../../wailsjs/go/ai/AI"));
 vi.mock("../../wailsjs/go/opsctl/Opsctl", () => mockBinderModule("../../wailsjs/go/opsctl/Opsctl"));
 vi.mock("../../wailsjs/go/extension/Extension", () => mockBinderModule("../../wailsjs/go/extension/Extension"));

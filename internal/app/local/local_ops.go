@@ -105,6 +105,32 @@ func (l *Local) ConnectLocalAsync(req LocalConnectRequest) (string, error) {
 	return connectionID, nil
 }
 
+// SplitLocal 本地终端分屏：以现有会话相同的 shell 配置新开一个会话，返回新 sessionID。
+// 与 SSH 不同，本地没有可复用的连接，分屏即再起一个同配置的 shell PTY。回调接线与
+// ConnectLocalAsync 一致（sessionID 已知后再挂，避免首屏输出丢失）。
+func (l *Local) SplitLocal(existingSessionID string, cols, rows int) (string, error) {
+	sessionID, err := l.manager.SplitFrom(existingSessionID, cols, rows)
+	if err != nil {
+		logger.Ctx(l.ctx).Warn("local split failed",
+			zap.String("existingSessionID", existingSessionID), zap.Error(err))
+		return "", fmt.Errorf("%s: %w", i18n.Pick(l.lang.Lang(), "本地终端分屏失败", "local terminal split failed"), err)
+	}
+
+	l.manager.SetCallbacks(
+		sessionID,
+		func(data []byte) {
+			wailsRuntime.EventsEmit(l.ctx, "local:data:"+sessionID, base64.StdEncoding.EncodeToString(data))
+		},
+		func(sid string) {
+			wailsRuntime.EventsEmit(l.ctx, "local:closed:"+sid, nil)
+		},
+	)
+
+	logger.Ctx(l.ctx).Info("local terminal split",
+		zap.String("from", existingSessionID), zap.String("sessionID", sessionID))
+	return sessionID, nil
+}
+
 // WriteLocal 向本地终端写入数据（base64 编码）。
 func (l *Local) WriteLocal(sessionID string, dataB64 string) error {
 	sess, ok := l.manager.GetSession(sessionID)

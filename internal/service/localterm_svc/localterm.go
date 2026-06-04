@@ -10,7 +10,10 @@ import (
 	"go.uber.org/zap"
 )
 
-var errSessionClosed = errors.New("session is closed")
+var (
+	errSessionClosed   = errors.New("session is closed")
+	errSessionNotFound = errors.New("local session not found")
+)
 
 // callbackSetupGracePeriod 是会话挂回调前的宽限期,超时未挂则回收 PTY 防泄漏。
 // 用 var 而非 const,与 startPTYFn 同理:测试可缩短它以快速覆盖宽限路径。
@@ -31,6 +34,12 @@ type Session struct {
 	ID      string
 	AssetID int64
 	proc    ptyProcess
+
+	// 启动配置,构造后不可变(与 proc/ID/AssetID 同):本地分屏(SplitFrom)据此
+	// 再起一个同 shell 的 PTY —— 本地无连接可复用,分屏即新开一个同配置 shell。
+	shell string
+	args  []string
+	cwd   string
 
 	writeMu sync.Mutex
 	mu      sync.Mutex
@@ -141,13 +150,35 @@ func (m *Manager) Connect(cfg ConnectConfig) (string, error) {
 	sessionID := fmt.Sprintf("local-%d", m.counter)
 	m.mu.Unlock()
 
-	sess := &Session{ID: sessionID, AssetID: cfg.AssetID, proc: proc}
+	sess := &Session{
+		ID: sessionID, AssetID: cfg.AssetID, proc: proc,
+		shell: cfg.Shell, args: cfg.Args, cwd: cfg.Cwd,
+	}
 	m.sessions.Store(sessionID, sess)
 	m.watchCallbackSetup(sess, callbackSetupGracePeriod)
 
 	logger.Default().Info("local terminal started",
 		zap.String("sessionID", sessionID), zap.Int64("assetID", cfg.AssetID), zap.String("shell", cfg.Shell))
 	return sessionID, nil
+}
+
+// SplitFrom 以现有会话的 shell 配置(shell/args/cwd/assetID)新开一个 PTY,返回新
+// sessionID。本地"分屏"不复用 PTY(没有连接可复用),而是再起一个同配置的 shell ——
+// 与 iTerm/tmux 的分屏语义一致。调用方随后用 SetCallbacks 挂回调,与 Connect 一致。
+func (m *Manager) SplitFrom(existingSessionID string, cols, rows int) (string, error) {
+	src, ok := m.GetSession(existingSessionID)
+	if !ok {
+		return "", fmt.Errorf("%w: %s", errSessionNotFound, existingSessionID)
+	}
+	// shell/args/cwd 构造后不可变,读取无需持锁(同 readOutput 读 proc)。
+	return m.Connect(ConnectConfig{
+		AssetID: src.AssetID,
+		Shell:   src.shell,
+		Args:    src.args,
+		Cwd:     src.cwd,
+		Cols:    cols,
+		Rows:    rows,
+	})
 }
 
 // SetCallbacks 挂数据/关闭回调,回调就绪后才启动 reader,避免首屏输出丢失。

@@ -141,6 +141,61 @@ func TestDisconnectClosesProc(t *testing.T) {
 	}, time.Second, 5*time.Millisecond)
 }
 
+func TestSplitFromReusesShellConfigAndSpawnsNewSession(t *testing.T) {
+	var mu sync.Mutex
+	var specs []ptySpec
+	procs := []*fakeProc{newFakeProc(), newFakeProc()}
+	orig := startPTYFn
+	idx := 0
+	startPTYFn = func(spec ptySpec) (ptyProcess, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		specs = append(specs, spec)
+		p := procs[idx]
+		idx++
+		return p, nil
+	}
+	t.Cleanup(func() { startPTYFn = orig })
+
+	mgr := NewManager()
+	sid1, err := mgr.Connect(ConnectConfig{
+		AssetID: 9, Shell: "/bin/zsh", Args: []string{"-l"}, Cwd: "/tmp", Cols: 80, Rows: 24,
+	})
+	require.NoError(t, err)
+	mgr.SetCallbacks(sid1, func([]byte) {}, nil)
+
+	sid2, err := mgr.SplitFrom(sid1, 100, 30)
+	require.NoError(t, err)
+	mgr.SetCallbacks(sid2, func([]byte) {}, nil)
+
+	assert.NotEqual(t, sid1, sid2, "分屏应创建一个新会话,而非复用原会话")
+
+	// 原会话与新会话应同时活跃,互不影响。
+	_, ok1 := mgr.GetSession(sid1)
+	_, ok2 := mgr.GetSession(sid2)
+	assert.True(t, ok1, "原会话应仍然活跃")
+	assert.True(t, ok2, "分屏出的新会话应活跃")
+
+	// 第二次启动的 PTY 复用了原会话的 shell/args/cwd,但用分屏传入的新 cols/rows。
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, specs, 2, "应启动两个 PTY:原会话 + 分屏")
+	assert.Equal(t, "/bin/zsh", specs[1].Shell)
+	assert.Equal(t, []string{"-l"}, specs[1].Args)
+	assert.Equal(t, "/tmp", specs[1].Cwd)
+	assert.Equal(t, 100, specs[1].Cols)
+	assert.Equal(t, 30, specs[1].Rows)
+}
+
+func TestSplitFromUnknownSessionErrors(t *testing.T) {
+	proc := newFakeProc()
+	withFakeStartPTY(t, proc)
+	mgr := NewManager()
+
+	_, err := mgr.SplitFrom("local-404", 80, 24)
+	require.Error(t, err, "对不存在的会话分屏应报错")
+}
+
 func withShortGracePeriod(t *testing.T, d time.Duration) {
 	orig := callbackSetupGracePeriod
 	callbackSetupGracePeriod = d

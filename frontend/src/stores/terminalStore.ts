@@ -17,7 +17,13 @@ import {
   DisconnectSerial,
   ResizeSerialTerminal,
 } from "../../wailsjs/go/serial/Serial";
-import { WriteLocal, ConnectLocalAsync, DisconnectLocal, ResizeLocalTerminal } from "../../wailsjs/go/local/Local";
+import {
+  WriteLocal,
+  ConnectLocalAsync,
+  DisconnectLocal,
+  ResizeLocalTerminal,
+  SplitLocal,
+} from "../../wailsjs/go/local/Local";
 import { ssh as ssh_models, asset_entity } from "../../wailsjs/go/models";
 import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime";
 import { bytesToBase64 } from "../lib/terminalEncode";
@@ -39,6 +45,8 @@ interface TransportSpec {
   disconnect: (sessionId: string) => void;
   eventPrefix: string;
   canSplit: boolean;
+  /** 分屏:基于现有会话开一个新会话,返回新 sessionId。canSplit 为 true 时必须提供。 */
+  split?: (existingSessionId: string, cols: number, rows: number) => Promise<string>;
   /** 仅 ssh 会同步 cwd / 暴露 SFTP 等目录能力。 */
   hasDirectorySync: boolean;
 }
@@ -54,6 +62,7 @@ export const TRANSPORTS: Record<TerminalTransport, TransportSpec> = {
     disconnect: DisconnectSSH,
     eventPrefix: "ssh",
     canSplit: true,
+    split: SplitSSH,
     hasDirectorySync: true,
   },
   serial: {
@@ -71,7 +80,9 @@ export const TRANSPORTS: Record<TerminalTransport, TransportSpec> = {
     resize: ResizeLocalTerminal,
     disconnect: DisconnectLocal,
     eventPrefix: "local",
-    canSplit: false,
+    // 本地无连接可复用,分屏即再起一个同 shell 配置的 PTY(同 iTerm/tmux),由 SplitLocal 实现。
+    canSplit: true,
+    split: SplitLocal,
     hasDirectorySync: false,
   },
 };
@@ -907,10 +918,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   splitPane: (tabId, direction) => {
     const data = get().tabData[tabId];
     if (!data) return;
-    // 仅 ssh 支持 split（serial 物理端口不可复用、local 复用同一 PTY 也无意义），
-    // 上游菜单已 disable，这里再防一道，避免外部直接调用绕过。
+    // 能否分屏按 transport 查表:ssh 复用连接开新会话,local 再起一个同 shell 的 PTY,
+    // serial 物理端口不可复用故不支持。上游菜单/工具栏已 disable,这里再防一道,
+    // 避免快捷键等外部入口绕过。
     const activeTransport = data.panes[data.activePaneId]?.transport ?? "ssh";
-    if (!TRANSPORTS[activeTransport].canSplit) return;
+    const spec = TRANSPORTS[activeTransport];
+    if (!spec.canSplit || !spec.split) return;
 
     const pendingId = `pending-${Date.now()}`;
 
@@ -932,8 +945,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       };
     });
 
-    // Step 2: Create new session on existing connection
-    SplitSSH(data.activePaneId, 80, 24)
+    // Step 2: Create the new session (ssh: reuse connection / local: new PTY)
+    spec
+      .split(data.activePaneId, 80, 24)
       .then((sessionId: string) => {
         set((state) => {
           const d = state.tabData[tabId];
@@ -953,15 +967,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
                 activePaneId: sessionId,
                 panes: {
                   ...d.panes,
-                  // 新 pane 继承 active pane 的 transport（今天只有 ssh 可 split，
-                  // 但不写死，未来某 transport 若 canSplit:true 也能拿到正确的 transport）。
+                  // 新 pane 继承 active pane 的 transport（ssh / local 均可 split，
+                  // 各自得到正确的 transport，分屏出的 pane 走对应的读写/事件通道）。
                   [sessionId]: { sessionId, transport: activeTransport, connected: true, connectedAt: Date.now() },
                 },
               },
             },
           };
         });
-        registerSessionSyncListener(sessionId);
+        // 仅有目录同步能力的 transport(ssh)才挂 sync 监听;local 无 cwd 同步,避免空挂 ssh:sync。
+        if (spec.hasDirectorySync) {
+          registerSessionSyncListener(sessionId);
+        }
       })
       .catch((err: unknown) => {
         console.error("Split connection failed:", err);
