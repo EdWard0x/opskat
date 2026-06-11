@@ -115,7 +115,7 @@ make build-cli      # 仅构建 opsctl CLI
 
 ## 🤝 参与贡献
 
-我们欢迎所有形式的贡献！查看 Issues 或提交 Pull Request。
+我们欢迎所有形式的贡献！请先阅读[贡献指南](./CONTRIBUTING_ZH.md)（[English](../CONTRIBUTING.md)）了解开发环境、提交规范和 PR 流程，然后查看 Issues 或提交 Pull Request。
 
 ---
 

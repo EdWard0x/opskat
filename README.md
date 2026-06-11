@@ -115,7 +115,7 @@ make build-cli      # Build opsctl CLI only
 
 ## 🤝 Contributing
 
-We welcome all forms of contribution! Check out the issues or submit a pull request.
+We welcome all forms of contribution! Read the [Contributing Guide](./CONTRIBUTING.md) ([中文版](./docs/CONTRIBUTING_ZH.md)) for development setup, commit conventions, and the PR process, then check out the issues or submit a pull request.
 
 ---
 
