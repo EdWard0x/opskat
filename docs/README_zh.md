@@ -29,7 +29,7 @@ OpsKat
   <img src="images/screenshot-main.png" alt="OpsKat 截图">
 </p>
 
-## 关于
+## 🧭 关于
 
 平时操作服务器环境，经常要打开好几个工具来回切换：SSH、数据库、Redis、Kafka 控制台来回跳。OpsKat 把常用的资产操作都集成在一起，不用再在好几个工具之间跳了。加上 AI Agent，直接跟它说一句话就能搞定，当然每一步都有策略管控和审计日志。
 
@@ -37,11 +37,11 @@ OpsKat
 
 **如果觉得有用，求个 Star ⭐ 这是对我们最大的支持！**
 
-## 介绍视频
+## 🎬 介绍视频
 
 https://github.com/user-attachments/assets/5816f1b1-ba90-4a7c-a5a7-cf4c5d7bbb89
 
-## 演示
+## 🎥 演示
 
 https://github.com/user-attachments/assets/035fc0df-230c-456b-87bd-8a4a125feaec
 
@@ -113,9 +113,18 @@ make build-cli      # 仅构建 opsctl CLI
 
 ---
 
+## 💬 社区
+
+加入社区，与其他用户和开发者交流：
+
+- [Telegram](https://t.me/opskat)
+- [QQ群：OpsKat 交流群](https://qm.qq.com/q/sERnNKEzeg)
+
+---
+
 ## 🤝 参与贡献
 
-我们欢迎所有形式的贡献！请先阅读[贡献指南](./CONTRIBUTING_ZH.md)（[English](../CONTRIBUTING.md)）了解开发环境、提交规范和 PR 流程，然后查看 Issues 或提交 Pull Request。
+我们欢迎所有形式的贡献！请先阅读[贡献指南](./CONTRIBUTING_ZH.md)了解开发环境、提交规范和 PR 流程，然后查看 Issues 或提交 Pull Request。
 
 ---
 

@@ -29,7 +29,7 @@ OpsKat
   <img src="docs/images/screenshot-main.png" alt="OpsKat Screenshot">
 </p>
 
-## About
+## 🧭 About
 
 Managing servers often means juggling multiple tools — SSH clients, database GUIs, Redis managers, and Kafka consoles — constantly switching between them. OpsKat brings everything together in one place. With its AI agent, you can describe what you need in natural language, and it handles the rest. Even without the AI features, all common asset operations are unified in a single interface.
 
@@ -37,11 +37,11 @@ Currently supports SSH servers, MySQL/PostgreSQL databases, Redis, MongoDB, and 
 
 **If you find it useful, please give us a Star ⭐ — it means a lot!**
 
-## Intro Video
+## 🎬 Intro Video
 
 https://github.com/user-attachments/assets/2af6e52e-637c-4398-9c8b-8b39b4238b12
 
-## Demo
+## 🎥 Demo
 
 https://github.com/user-attachments/assets/035fc0df-230c-456b-87bd-8a4a125feaec
 
@@ -113,9 +113,18 @@ make build-cli      # Build opsctl CLI only
 
 ---
 
+## 💬 Community
+
+Join our community to communicate with other users and developers:
+
+- [Telegram](https://t.me/opskat)
+- [QQ Group](https://qm.qq.com/q/sERnNKEzeg)
+
+---
+
 ## 🤝 Contributing
 
-We welcome all forms of contribution! Read the [Contributing Guide](./CONTRIBUTING.md) ([中文版](./docs/CONTRIBUTING_ZH.md)) for development setup, commit conventions, and the PR process, then check out the issues or submit a pull request.
+We welcome all forms of contribution! Read the [Contributing Guide](./CONTRIBUTING.md) for development setup, commit conventions, and the PR process, then check out the issues or submit a pull request.
 
 ---
 
