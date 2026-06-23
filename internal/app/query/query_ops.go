@@ -24,32 +24,10 @@ import (
 
 // --- panel 连接缓存助手 ---
 
-// getOrDialPanelDB 从面板缓存取 *sql.DB。
-// 远端 SQLite VFS 不缓存：写连接会持有 .opskat.lock,每次操作后必须释放。
+// getOrDialPanelDB 从面板缓存取 *sql.DB,所有数据库类型(含远端 SQLite VFS)统一缓存。
+// 远端 SQLite 在会话内只抢一次 .opskat.lock,由缓存的空闲驱逐/关闭统一释放;其 *sql.DB
+// 的 MaxOpenConns=1 让并发面板操作排队复用同一条连接,而非各自重连抢锁、并发时硬失败。
 func (q *Query) getOrDialPanelDB(ctx context.Context, asset *asset_entity.Asset, cfg *asset_entity.DatabaseConfig, password string) (*sql.DB, func() error, error) {
-	if !shouldCachePanelDB(cfg) {
-		cfg.Proxy = credential_resolver.Default().DecryptProxyPassword(cfg.Proxy)
-		db, closer, err := connpool.DialDatabase(ctx, asset, cfg, password, q.pool)
-		if err != nil {
-			return nil, nil, err
-		}
-		cleanup := func() error {
-			var closeErr error
-			if err := db.Close(); err != nil && !isExpectedPanelCloseErr(err) {
-				logger.Default().Warn("close remote sqlite db", zap.Error(err))
-				closeErr = errors.Join(closeErr, err)
-			}
-			if closer != nil {
-				if err := closer.Close(); err != nil && !isExpectedPanelCloseErr(err) {
-					logger.Default().Warn("close remote sqlite vfs", zap.Error(err))
-					closeErr = errors.Join(closeErr, err)
-				}
-			}
-			return closeErr
-		}
-		return db, cleanup, nil
-	}
-
 	key := panelDBCacheKey(asset.ID, cfg)
 	db, _, err := q.dbPanelCache.GetOrDial(key, func() (*sql.DB, io.Closer, error) {
 		cfg.Proxy = credential_resolver.Default().DecryptProxyPassword(cfg.Proxy)
@@ -59,10 +37,6 @@ func (q *Query) getOrDialPanelDB(ctx context.Context, asset *asset_entity.Asset,
 		return nil, nil, err
 	}
 	return db, func() error { return nil }, nil
-}
-
-func shouldCachePanelDB(cfg *asset_entity.DatabaseConfig) bool {
-	return cfg.Driver != asset_entity.DriverSQLite || cfg.SQLiteSource != asset_entity.SQLiteSourceRemoteSSHVFS
 }
 
 func panelDBCacheKey(assetID int64, cfg *asset_entity.DatabaseConfig) string {

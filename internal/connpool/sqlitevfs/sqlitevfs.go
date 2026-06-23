@@ -3,6 +3,7 @@ package sqlitevfs
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/ncruces/go-sqlite3"
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -151,12 +153,110 @@ type remoteLock struct {
 	file   RemoteFile
 }
 
-func acquireLock(remote RemoteFS, lockPath string) (*remoteLock, error) {
-	f, err := remote.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
-	if err != nil {
-		return nil, fmt.Errorf("acquire remote SQLite lock: %w", err)
+// lockMeta records who owns a remote lock file. It lets a later session tell an
+// orphaned lock (left by a crashed process on this host) apart from one a live
+// session still holds, instead of failing every open with an opaque error.
+type lockMeta struct {
+	Host    string `json:"host"`
+	PID     int    `json:"pid"`
+	Created int64  `json:"created"` // unix nanoseconds
+}
+
+// localHost identifies the machine the current process runs on. Stale detection
+// only ever reclaims locks created on this same host (where PID liveness is
+// meaningful); locks from other hosts are reported, never taken over.
+var localHost = func() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "unknown-host"
 	}
-	return &remoteLock{remote: remote, path: lockPath, file: f}, nil
+	return h
+}()
+
+const (
+	lockAcquireRetries = 3
+	lockMetaMaxBytes   = 4096
+)
+
+func acquireLock(remote RemoteFS, lockPath string) (*remoteLock, error) {
+	for attempt := 0; ; attempt++ {
+		f, err := remote.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+		if err == nil {
+			if writeErr := writeLockMeta(f); writeErr != nil {
+				_ = f.Close()
+				_ = remote.Remove(lockPath)
+				return nil, fmt.Errorf("acquire remote SQLite lock: write owner metadata: %w", writeErr)
+			}
+			return &remoteLock{remote: remote, path: lockPath, file: f}, nil
+		}
+		// O_EXCL can fail for reasons other than an existing file (permissions,
+		// network). Only treat it as "already locked" when the file is really there.
+		if _, statErr := remote.Stat(lockPath); statErr != nil {
+			return nil, fmt.Errorf("acquire remote SQLite lock: %w", err)
+		}
+		meta, readErr := readLockMeta(remote, lockPath)
+		if readErr == nil && isStaleLock(meta) && attempt < lockAcquireRetries {
+			if rmErr := remote.Remove(lockPath); rmErr != nil && !isNotExist(rmErr) {
+				return nil, fmt.Errorf("acquire remote SQLite lock: reclaim stale lock %s: %w", lockPath, rmErr)
+			}
+			continue
+		}
+		return nil, lockHeldError(lockPath, meta, readErr)
+	}
+}
+
+func writeLockMeta(f RemoteFile) error {
+	payload, err := json.Marshal(lockMeta{Host: localHost, PID: os.Getpid(), Created: time.Now().UnixNano()})
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteAt(payload, 0); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+func readLockMeta(remote RemoteFS, lockPath string) (lockMeta, error) {
+	f, err := remote.OpenFile(lockPath, os.O_RDONLY)
+	if err != nil {
+		return lockMeta{}, err
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return lockMeta{}, err
+	}
+	size := fi.Size()
+	if size <= 0 || size > lockMetaMaxBytes {
+		return lockMeta{}, fmt.Errorf("unexpected lock metadata size %d", size)
+	}
+	buf := make([]byte, size)
+	if _, err := f.ReadAt(buf, 0); err != nil && !errors.Is(err, io.EOF) {
+		return lockMeta{}, err
+	}
+	var meta lockMeta
+	if err := json.Unmarshal(buf, &meta); err != nil {
+		return lockMeta{}, err
+	}
+	return meta, nil
+}
+
+// isStaleLock reports whether a lock can be safely reclaimed: it must belong to
+// this host (so the PID is ours to probe) and reference a process that is gone.
+func isStaleLock(meta lockMeta) bool {
+	return meta.Host != "" && meta.Host == localHost && !pidAlive(meta.PID)
+}
+
+func lockHeldError(lockPath string, meta lockMeta, readErr error) error {
+	if readErr != nil {
+		return fmt.Errorf("acquire remote SQLite lock: %s is held by another session (owner unreadable: %v); remove it if that session has ended", lockPath, readErr)
+	}
+	since := "unknown time"
+	if meta.Created > 0 {
+		since = time.Unix(0, meta.Created).Format(time.RFC3339)
+	}
+	return fmt.Errorf("acquire remote SQLite lock: database is locked by another session (host=%s pid=%d since %s); remove %s if that session has ended",
+		meta.Host, meta.PID, since, lockPath)
 }
 
 func (l *remoteLock) Close() error {
