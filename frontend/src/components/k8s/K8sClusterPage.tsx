@@ -417,6 +417,58 @@ export function K8sClusterPage({ asset }: Props) {
     setRefreshing(true);
     setAutoRefreshingItems(new Set());
     const promises: Promise<unknown>[] = [];
+    const refreshNamespaceList = <T,>(
+      namespaces: string[],
+      setLoadingItems: React.Dispatch<React.SetStateAction<Set<string>>>,
+      loadItems: (assetID: number, namespace: string) => Promise<string>,
+      setItems: React.Dispatch<React.SetStateAction<Record<string, T[]>>>,
+      setErrors: React.Dispatch<React.SetStateAction<Record<string, string>>>
+    ) => {
+      for (const ns of namespaces) {
+        setLoadingItems((prev) => new Set(prev).add(ns));
+        promises.push(
+          loadItems(asset.ID, ns)
+            .then((result: string) => {
+              const data = JSON.parse(result) as T[];
+              setItems((prev) => ({ ...prev, [ns]: data }));
+              setErrors((prev) => {
+                const next = { ...prev };
+                delete next[ns];
+                return next;
+              });
+            })
+            .catch((e: unknown) => {
+              setErrors((prev) => ({ ...prev, [ns]: String(e) }));
+            })
+            .finally(() => {
+              setLoadingItems((prev) => {
+                const next = new Set(prev);
+                next.delete(ns);
+                return next;
+              });
+            })
+        );
+      }
+    };
+    const openPodDetailKeys = new Set<string>();
+    for (const tab of innerTabs) {
+      if (tab.id.startsWith("pod:")) {
+        const parts = tab.id.split(":");
+        openPodDetailKeys.add(`${parts[1]}/${parts.slice(2).join(":")}`);
+      } else if (tab.id.startsWith("log:")) {
+        const parts = tab.id.split(":");
+        openPodDetailKeys.add(`${parts[1]}/${parts.slice(2).join(":")}`);
+      } else if (tab.id.startsWith("log-deploy:")) {
+        const parts = tab.id.split(":");
+        const ns = parts[1];
+        const deploymentName = parts.slice(2).join(":");
+        const deployment = namespaceDeploymentList[ns]?.find((d) => d.name === deploymentName);
+        const podName = logTabStates[tab.id]?.currentPod || deployment?.pods[0]?.name;
+        if (podName) {
+          openPodDetailKeys.add(`${ns}/${podName}`);
+        }
+      }
+    }
 
     promises.push(
       GetK8sClusterInfo(asset.ID)
@@ -450,6 +502,72 @@ export function K8sClusterPage({ asset }: Props) {
             setLoadingNamespaces((prev) => {
               const next = new Set(prev);
               next.delete(ns);
+              return next;
+            });
+          })
+      );
+    }
+
+    refreshNamespaceList<PodListItem>(
+      Object.keys(namespacePodList),
+      setLoadingPods,
+      GetK8sNamespacePods,
+      setNamespacePodList,
+      setPodErrors
+    );
+    refreshNamespaceList<DeploymentListItem>(
+      Object.keys(namespaceDeploymentList),
+      setLoadingDeployments,
+      GetK8sNamespaceDeployments,
+      setNamespaceDeploymentList,
+      setDeploymentErrors
+    );
+    refreshNamespaceList<ServiceListItem>(
+      Object.keys(namespaceServiceList),
+      setLoadingServices,
+      GetK8sNamespaceServices,
+      setNamespaceServiceList,
+      setServiceErrors
+    );
+    refreshNamespaceList<ConfigMapListItem>(
+      Object.keys(namespaceConfigMapList),
+      setLoadingConfigMaps,
+      GetK8sNamespaceConfigMaps,
+      setNamespaceConfigMapList,
+      setConfigMapErrors
+    );
+    refreshNamespaceList<SecretListItem>(
+      Object.keys(namespaceSecretList),
+      setLoadingSecrets,
+      GetK8sNamespaceSecrets,
+      setNamespaceSecretList,
+      setSecretErrors
+    );
+
+    for (const key of openPodDetailKeys) {
+      const slashIdx = key.indexOf("/");
+      if (slashIdx === -1) continue;
+      const ns = key.slice(0, slashIdx);
+      const podName = key.slice(slashIdx + 1);
+      setLoadingPodDetails((prev) => new Set(prev).add(key));
+      promises.push(
+        GetK8sPodDetail(asset.ID, ns, podName)
+          .then((result: string) => {
+            const data = JSON.parse(result) as PodDetail;
+            setPodDetails((prev) => ({ ...prev, [key]: data }));
+            setPodDetailErrors((prev) => {
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+          })
+          .catch((e: unknown) => {
+            setPodDetailErrors((prev) => ({ ...prev, [key]: String(e) }));
+          })
+          .finally(() => {
+            setLoadingPodDetails((prev) => {
+              const next = new Set(prev);
+              next.delete(key);
               return next;
             });
           })
